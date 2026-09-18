@@ -1,44 +1,91 @@
-import { useEffect, useState } from "react";
-import { getHealth, type HealthResponse } from "./api";
+import { FormEvent, useEffect, useState } from "react";
+import { getHealth, getStockOverview, type StockOverview } from "./api";
 
-const modules = [
-  ["行情中心", "Market data adapters and normalized quotes"],
-  ["策略分析", "Indicators, backtesting, and signals"],
-  ["AI 洞察", "Evidence-based natural-language analysis"],
-];
+function formatDate(timestamp: number) {
+  return new Date(timestamp).toLocaleDateString("zh-CN", { timeZone: "Asia/Shanghai" });
+}
+
+function number(value: number | undefined | null, digits = 2) {
+  return value == null ? "—" : value.toLocaleString("zh-CN", { maximumFractionDigits: digits });
+}
 
 export default function App() {
-  const [health, setHealth] = useState<HealthResponse | null>(null);
+  const [query, setQuery] = useState("600519");
+  const [days, setDays] = useState("365");
+  const [overview, setOverview] = useState<StockOverview | null>(null);
+  const [health, setHealth] = useState("正在连接 API…");
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    getHealth().then(setHealth).catch((reason: Error) => setError(reason.message));
+    getHealth()
+      .then((result) => setHealth(`API 在线 · ${result.service}`))
+      .catch(() => setHealth("API 离线"));
   }, []);
+
+  async function loadOverview(event?: FormEvent) {
+    event?.preventDefault();
+    setLoading(true);
+    setError(null);
+    try {
+      setOverview(await getStockOverview(query.trim(), Number(days)));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "获取数据失败");
+      setOverview(null);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const snapshot = overview?.snapshot;
+  const bars = overview?.bars.slice(-12).reverse() ?? [];
+  const actions = overview?.corporate_actions.slice(0, 8) ?? [];
 
   return (
     <main className="shell">
       <nav className="nav">
         <span className="brand">stock<span>-ai</span></span>
-        <span className="badge">Architecture scaffold</span>
+        <span className="badge">A 股数据工作台</span>
       </nav>
+
       <section className="hero">
-        <p className="eyebrow">FULL-STACK FOUNDATION</p>
-        <h1>数据、策略与 AI 洞察，在同一个工作台协同。</h1>
-        <p className="lead">React 前端负责体验，FastAPI 后端负责业务边界，数据源和模型通过服务层统一接入。</p>
-        <div className="status">
-          <span className={`dot ${health ? "ok" : ""}`} />
-          {error ? `API 离线：${error}` : health ? `API 在线 · ${health.service}` : "正在连接 API…"}
-        </div>
+        <p className="eyebrow">FINANCIAL-API CONNECTED</p>
+        <h1>一键获取 A 股行情、K 线与分红信息。</h1>
+        <p className="lead">通过服务端安全接入同花顺金融数据服务。输入股票名称、代码或 thscode，统一返回实时价格、历史日 K 和公司行为。</p>
+        <form className="query-form" onSubmit={loadOverview}>
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="例如：600519、贵州茅台、600519.SH" />
+          <select value={days} onChange={(event) => setDays(event.target.value)} aria-label="历史天数">
+            <option value="30">近 30 天</option>
+            <option value="180">近 180 天</option>
+            <option value="365">近 1 年</option>
+            <option value="1095">近 3 年</option>
+          </select>
+          <button disabled={loading || !query.trim()}>{loading ? "获取中…" : "一键获取"}</button>
+        </form>
+        <div className="status"><span className={`dot ${health.includes("在线") ? "ok" : ""}`} />{health}</div>
+        {error && <div className="error">{error}</div>}
       </section>
-      <section className="grid">
-        {modules.map(([title, description]) => (
-          <article className="card" key={title}>
-            <div className="card-icon">↗</div>
-            <h2>{title}</h2>
-            <p>{description}</p>
-          </article>
-        ))}
-      </section>
+
+      {overview && (
+        <>
+          <section className="instrument-head">
+            <div><span className="eyebrow">{overview.instrument.thscode}</span><h2>{overview.instrument.name}</h2></div>
+            <span className="source">数据源：{overview.source.provider} · {overview.source.adjust} 复权</span>
+          </section>
+          <section className="metrics">
+            <article><span>最新价</span><strong>{number(snapshot?.last_price)}</strong></article>
+            <article><span>涨跌幅</span><strong className={(snapshot?.price_change_ratio_pct ?? 0) >= 0 ? "positive" : "negative"}>{number(snapshot?.price_change_ratio_pct)}%</strong></article>
+            <article><span>成交量</span><strong>{number(snapshot?.volume, 0)}</strong></article>
+            <article><span>成交额</span><strong>{number(snapshot?.turnover)}</strong></article>
+          </section>
+          <section className="data-grid">
+            <article className="panel"><div className="panel-title"><h3>历史日 K</h3><span>{overview.bars.length} 条</span></div><div className="table-wrap"><table><thead><tr><th>日期</th><th>开盘</th><th>最高</th><th>最低</th><th>收盘</th></tr></thead><tbody>{bars.map((bar) => <tr key={bar.date_ms}><td>{formatDate(bar.date_ms)}</td><td>{number(bar.open_price)}</td><td>{number(bar.high_price)}</td><td>{number(bar.low_price)}</td><td>{number(bar.close_price)}</td></tr>)}</tbody></table></div></article>
+            <article className="panel"><div className="panel-title"><h3>分红 / 送股事件</h3><span>{overview.corporate_actions.length} 条</span></div><div className="table-wrap"><table><thead><tr><th>除权除息日</th><th>现金分红/股</th><th>送股比例</th></tr></thead><tbody>{actions.length ? actions.map((action) => <tr key={action.ex_date_ms}><td>{formatDate(action.ex_date_ms)}</td><td>{number(action.dividend_per_share)}</td><td>{number(action.per_share_bonus * 100)}%</td></tr>) : <tr><td colSpan={3}>暂无公司行为数据</td></tr>}</tbody></table></div></article>
+          </section>
+          <p className="disclaimer">数据用于研究和展示，不构成投资建议。数据时间范围：{overview.source.from} 至 {overview.source.to}。</p>
+        </>
+      )}
+
       <footer>stock-ai · frontend / backend separated architecture</footer>
     </main>
   );
