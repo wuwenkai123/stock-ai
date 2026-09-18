@@ -1,6 +1,6 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Optional
 
 import httpx
 
@@ -26,12 +26,19 @@ class AmbiguousSymbolError(FinancialApiError):
 class FinancialApiClient:
     """Small server-side adapter for the official financial-api service."""
 
+    ADJUSTMENT_FACTORS_PATH = "/api/a-share/corporate-actions/adjustment-factors"
+
     def __init__(self, base_url: str, api_key: str, timeout_seconds: float = 20.0) -> None:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key.strip()
         self.timeout_seconds = timeout_seconds
 
-    async def _get_json(self, path: str, params: dict[str, Any]) -> Any:
+    async def _get_json(
+        self,
+        path: str,
+        params: dict[str, Any],
+        allow_no_adjustment_events: bool = False,
+    ) -> Any:
         if not self.api_key:
             raise MissingApiKeyError(
                 "Configure STOCK_AI_FINANCIAL_API_KEY on the backend before requesting market data"
@@ -61,6 +68,14 @@ class FinancialApiClient:
         if isinstance(payload, dict):
             code = payload.get("code")
             if code not in (None, 0, "0"):
+                # 3002 means the stock is valid but has no adjustment
+                # events in the requested period. Treat it as empty data.
+                if (
+                    allow_no_adjustment_events
+                    and path == self.ADJUSTMENT_FACTORS_PATH
+                    and str(code) == "3002"
+                ):
+                    return {"item": [], "_status": "no_events"}
                 raise FinancialApiError(
                     f"financial-api returned code {code}: {payload.get('message', 'unknown error')}"
                 )
@@ -126,12 +141,14 @@ class FinancialApiClient:
                 },
             ),
             self._get_json(
-                "/api/a-share/corporate-actions/adjustment-factors",
+                self.ADJUSTMENT_FACTORS_PATH,
                 {"thscode": thscode, "from": from_date, "to": to_date},
+                allow_no_adjustment_events=True,
             ),
         )
 
         snapshots = self._items(snapshot_data)
+        action_status = actions_data.get("_status", "ok") if isinstance(actions_data, dict) else "ok"
         return {
             "instrument": instrument,
             "snapshot": snapshots[0] if snapshots else None,
@@ -144,5 +161,6 @@ class FinancialApiClient:
                 "adjust": adjust,
                 "from": from_date,
                 "to": to_date,
+                "corporate_actions_status": action_status,
             },
         }
