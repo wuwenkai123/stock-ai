@@ -31,8 +31,8 @@ financial-api / 同花顺金融数据服务
 2. Backend 通过 `/api/meta/tickers/search` 将输入消歧为唯一 A 股标的。
 3. Backend 并发请求：
    - `/api/a-share/prices/snapshot`：最新价格、涨跌幅、成交量和成交额；
-   - `/api/a-share/prices/historical`：日 K 线，支持 `none`、`forward`、`backward` 复权；
-   - `/api/a-share/corporate-actions/adjustment-factors`：现金分红和送股事件。
+   - `/api/a-share/prices/historical`：按用户选择的天数获取日 K 线，支持 `none`、`forward`、`backward` 复权；
+   - `/api/a-share/corporate-actions/adjustment-factors`：获取完整历史现金分红和送股事件，不受 K 线天数筛选影响。
 4. Backend 统一返回 `instrument`、`snapshot`、`bars`、`corporate_actions` 和 `source`。
 5. Frontend 展示行情指标、K 线记录和分红/送股事件。
 
@@ -63,13 +63,14 @@ GET /api/v1/stocks/overview?query=600519&days=365&adjust=forward
 GET /api/v1/stocks/{symbol}/summary
 ```
 
-`overview` 是一键聚合接口。它将名称/代码消歧、实时价格、历史日 K 和公司行为封装在一次前端请求中。
+`overview` 是一键聚合接口：K 线使用请求的 `days` 时间范围，分红/送股事件默认读取完整历史。
 
 ## 5. 数据口径
 
 - `thscode` 必须由上游标的检索确认，不在客户端猜测交易所后缀。
 - 个股历史 K 线当前使用 `1d`，单次窗口不超过 10 年。
 - `dividend_per_share > 0` 表示现金分红；`per_share_bonus > 0` 表示送股比例。
+- `financial-api` 返回 `3002` 时表示没有公司行为事件，Backend 将其转换为空列表，而不是返回 502。
 - 接口返回数据源、复权方式和时间范围，便于审计和复现。
 - 金融数据只用于研究和展示，不构成投资建议。
 

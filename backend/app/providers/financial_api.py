@@ -1,6 +1,6 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Any
 
 import httpx
 
@@ -125,6 +125,9 @@ class FinancialApiClient:
         from_date = start.date().isoformat()
         to_date = now.date().isoformat()
 
+        # The K-line range follows the user's selected `days`. Corporate
+        # actions intentionally omit from/to so the dividend panel can show
+        # the complete history instead of only events in the K-line window.
         snapshot_data, historical_data, actions_data = await asyncio.gather(
             self._get_json(
                 "/api/a-share/prices/snapshot",
@@ -142,7 +145,7 @@ class FinancialApiClient:
             ),
             self._get_json(
                 self.ADJUSTMENT_FACTORS_PATH,
-                {"thscode": thscode, "from": from_date, "to": to_date},
+                {"thscode": thscode},
                 allow_no_adjustment_events=True,
             ),
         )
@@ -161,6 +164,7 @@ class FinancialApiClient:
                 "adjust": adjust,
                 "from": from_date,
                 "to": to_date,
+                "corporate_actions_range": "all",
                 "corporate_actions_status": action_status,
             },
         }
