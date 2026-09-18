@@ -46,6 +46,9 @@ export type StockOverview = {
     adjust: string;
     from: string;
     to: string;
+    history_range: string;
+    historical_chunks: number;
+    corporate_actions_range: string;
   };
 };
 
@@ -66,7 +69,9 @@ export async function getHealth(): Promise<HealthResponse> {
   return parseResponse(await fetch("/api/v1/health"));
 }
 
-export async function getStockOverview(query: string, days = 365): Promise<StockOverview> {
-  const params = new URLSearchParams({ query, days: String(days), adjust: "forward" });
+export async function getStockOverview(query: string, range: number | "all" = 365): Promise<StockOverview> {
+  const params = new URLSearchParams({ query, adjust: "forward" });
+  if (range === "all") params.set("since_listing", "true");
+  else params.set("days", String(range));
   return parseResponse(await fetch(`/api/v1/stocks/overview?${params}`));
 }

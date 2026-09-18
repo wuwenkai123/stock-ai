@@ -38,7 +38,7 @@ class StockSummary(BaseModel):
 
 
 settings = Settings()
-app = FastAPI(title="stock-ai API", version="0.2.0")
+app = FastAPI(title="stock-ai API", version="0.3.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[item.strip() for item in settings.cors_origins.split(",")],
@@ -67,19 +67,17 @@ def health() -> HealthResponse:
 async def stock_overview(
     query: str = Query(..., min_length=1, description="股票名称、ticker 或 thscode"),
     days: int = Query(365, ge=1, le=3650),
+    since_listing: bool = Query(False, description="获取上市以来全部可用日 K"),
     adjust: Literal["none", "forward", "backward"] = "forward",
 ) -> dict:
     try:
-        return await financial_client().get_overview(query, days, adjust)
+        return await financial_client().get_overview(query, days, adjust, since_listing=since_listing)
     except MissingApiKeyError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except SymbolNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except AmbiguousSymbolError as exc:
-        raise HTTPException(
-            status_code=409,
-            detail={"message": str(exc), "candidates": exc.candidates},
-        ) from exc
+        raise HTTPException(status_code=409, detail={"message": str(exc), "candidates": exc.candidates}) from exc
     except FinancialApiError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 

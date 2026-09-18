@@ -27,6 +27,9 @@ class FinancialApiClient:
     """Small server-side adapter for the official financial-api service."""
 
     ADJUSTMENT_FACTORS_PATH = "/api/a-share/corporate-actions/adjustment-factors"
+    HISTORICAL_PATH = "/api/a-share/prices/historical"
+    MAX_HISTORY_CHUNK_DAYS = 3650
+    EARLIEST_A_SHARE_DATE = datetime(1990, 1, 1, tzinfo=timezone.utc)
 
     def __init__(self, base_url: str, api_key: str, timeout_seconds: float = 20.0) -> None:
         self.base_url = base_url.rstrip("/")
@@ -68,8 +71,6 @@ class FinancialApiClient:
         if isinstance(payload, dict):
             code = payload.get("code")
             if code not in (None, 0, "0"):
-                # 3002 means the stock is valid but has no adjustment
-                # events in the requested period. Treat it as empty data.
                 if (
                     allow_no_adjustment_events
                     and path == self.ADJUSTMENT_FACTORS_PATH
@@ -113,28 +114,67 @@ class FinancialApiClient:
             raise AmbiguousSymbolError(candidates)
         return candidates[0]
 
+    async def get_historical_bars(
+        self,
+        thscode: str,
+        start: datetime,
+        end: datetime,
+        adjust: str,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Fetch long history in API-compliant windows of at most 10 years."""
+        windows: list[tuple[int, int]] = []
+        cursor = start
+        while cursor < end:
+            window_end = min(cursor + timedelta(days=self.MAX_HISTORY_CHUNK_DAYS), end)
+            windows.append((int(cursor.timestamp() * 1000), int(window_end.timestamp() * 1000)))
+            cursor = window_end
+
+        payloads = await asyncio.gather(
+            *(
+                self._get_json(
+                    self.HISTORICAL_PATH,
+                    {
+                        "thscode": thscode,
+                        "interval": "1d",
+                        "start": start_ms,
+                        "end": end_ms,
+                        "adjust": adjust,
+                    },
+                )
+                for start_ms, end_ms in windows
+            )
+        )
+
+        by_date: dict[int, dict[str, Any]] = {}
+        for payload in payloads:
+            for bar in self._items(payload):
+                date_ms = bar.get("date_ms")
+                if date_ms is not None:
+                    by_date[int(date_ms)] = bar
+
+        return [by_date[key] for key in sorted(by_date)], len(windows)
+
     async def get_overview(
-        self, query: str, days: int = 365, adjust: str = "forward"
+        self,
+        query: str,
+        days: int = 365,
+        adjust: str = "forward",
+        since_listing: bool = False,
     ) -> dict[str, Any]:
         instrument = await self.resolve_a_share(query)
         thscode = str(instrument["thscode"])
         now = datetime.now(timezone.utc)
-        start = now - timedelta(days=days)
+        start = self.EARLIEST_A_SHARE_DATE if since_listing else now - timedelta(days=days)
         start_ms = int(start.timestamp() * 1000)
         end_ms = int(now.timestamp() * 1000)
         from_date = start.date().isoformat()
         to_date = now.date().isoformat()
 
-        # The K-line range follows the user's selected `days`. Corporate
-        # actions intentionally omit from/to so the dividend panel can show
-        # the complete history instead of only events in the K-line window.
-        snapshot_data, historical_data, actions_data = await asyncio.gather(
-            self._get_json(
-                "/api/a-share/prices/snapshot",
-                {"thscodes": thscode},
-            ),
-            self._get_json(
-                "/api/a-share/prices/historical",
+        if since_listing:
+            historical_request = self.get_historical_bars(thscode, start, now, adjust)
+        else:
+            historical_request = self._get_json(
+                self.HISTORICAL_PATH,
                 {
                     "thscode": thscode,
                     "interval": "1d",
@@ -142,7 +182,11 @@ class FinancialApiClient:
                     "end": end_ms,
                     "adjust": adjust,
                 },
-            ),
+            )
+
+        snapshot_data, historical_data, actions_data = await asyncio.gather(
+            self._get_json("/api/a-share/prices/snapshot", {"thscodes": thscode}),
+            historical_request,
             self._get_json(
                 self.ADJUSTMENT_FACTORS_PATH,
                 {"thscode": thscode},
@@ -150,12 +194,17 @@ class FinancialApiClient:
             ),
         )
 
+        if since_listing:
+            bars, historical_chunks = historical_data
+        else:
+            bars, historical_chunks = self._items(historical_data), 1
+
         snapshots = self._items(snapshot_data)
         action_status = actions_data.get("_status", "ok") if isinstance(actions_data, dict) else "ok"
         return {
             "instrument": instrument,
             "snapshot": snapshots[0] if snapshots else None,
-            "bars": self._items(historical_data),
+            "bars": bars,
             "corporate_actions": self._items(actions_data),
             "source": {
                 "provider": "financial-api",
@@ -164,6 +213,8 @@ class FinancialApiClient:
                 "adjust": adjust,
                 "from": from_date,
                 "to": to_date,
+                "history_range": "since_listing" if since_listing else "days",
+                "historical_chunks": historical_chunks,
                 "corporate_actions_range": "all",
                 "corporate_actions_status": action_status,
             },
