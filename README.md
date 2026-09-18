@@ -6,22 +6,28 @@
 
 > 数据用于研究和展示，不构成投资建议。
 
-## 功能概览
-
-- 输入股票名称、6 位代码或完整 `thscode`，自动完成标的识别
-- 获取最新价、涨跌幅、开高低、成交量和成交额
-- 获取前复权、后复权或不复权历史日 K
-- 获取现金分红、送股和除权除息事件
-- 前端 Dashboard 展示行情指标、K 线记录和公司行为
-- API Key 只保存在后端，不暴露给浏览器
-
 ## 技术栈
 
 - **Frontend**：React + TypeScript + Vite
 - **Backend**：FastAPI + Pydantic + HTTPX
 - **数据源**：financial-api / 同花顺金融数据服务
+- **Python**：3.9+
 - **API**：REST `/api/v1`
 - **部署**：Docker Compose + Nginx
+
+## Python 3.9 安装
+
+后端支持 Python 3.9 及以上版本：
+
+```bash
+cd backend
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e .
+```
+
+如果系统没有写入全局 site-packages 的权限，使用虚拟环境即可避免 `Defaulting to user installation` 提示。也可以使用 `pip3 install --user -e .`，但推荐虚拟环境。
 
 ## 目录结构
 
@@ -127,58 +133,7 @@ GET /api/v1/stocks/overview?query=600519&days=365&adjust=forward
 | `days` | 历史数据范围，1–3650 天，默认 365 |
 | `adjust` | `none`、`forward` 或 `backward`，默认 `forward` |
 
-该接口会在后端完成以下流程：
-
-1. 调用 `/api/meta/tickers/search` 将输入消歧为唯一 A 股标的；
-2. 调用 `/api/a-share/prices/snapshot` 获取实时行情；
-3. 调用 `/api/a-share/prices/historical` 获取历史日 K；
-4. 调用 `/api/a-share/corporate-actions/adjustment-factors` 获取分红和送股事件；
-5. 将数据统一返回给前端。
-
-返回结构：
-
-```json
-{
-  "instrument": {},
-  "snapshot": {},
-  "bars": [],
-  "corporate_actions": [],
-  "source": {
-    "provider": "financial-api",
-    "thscode": "600519.SH",
-    "adjust": "forward",
-    "from": "2025-09-18",
-    "to": "2026-09-18"
-  }
-}
-```
-
-## 其他 Backend API
-
-```http
-GET /api/v1/health
-GET /api/v1/stocks/{symbol}/summary
-```
-
-## 数据口径
-
-- `thscode` 必须由上游标的检索确认，不在客户端猜测交易所后缀。
-- 个股历史 K 线当前使用日线 `1d`，单次窗口不超过 10 年。
-- `dividend_per_share > 0` 表示现金分红。
-- `per_share_bonus > 0` 表示送股比例，例如 `0.1` 表示每股送 0.1 股。
-- 返回数据包含数据源、复权方式和时间范围，便于审计和复现。
-- 当前金融数据 provider 的 API Key 仅由后端读取。
-
-## 架构文档
-
-详见 [`docs/architecture.md`](docs/architecture.md)，其中包含：
-
-- 前后端总体架构
-- financial-api 数据流
-- Provider Adapter 分层
-- API 设计约定
-- 数据口径与安全要求
-- PostgreSQL、Redis 和异步任务的演进路线
+该接口会在后端完成标的消歧、实时行情、历史日 K 和分红/送股事件的聚合。
 
 ## 安全说明
 

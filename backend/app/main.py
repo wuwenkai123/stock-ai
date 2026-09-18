@@ -1,5 +1,5 @@
-from datetime import UTC, datetime
-from typing import Literal
+from datetime import datetime, timezone
+from typing import Literal, Optional
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -32,8 +32,8 @@ class HealthResponse(BaseModel):
 class StockSummary(BaseModel):
     symbol: str
     name: str
-    price: float | None
-    change_percent: float | None
+    price: Optional[float]
+    change_percent: Optional[float]
     source: str
 
 
@@ -59,7 +59,7 @@ def financial_client() -> FinancialApiClient:
 @app.get("/api/v1/health", response_model=HealthResponse, tags=["system"])
 def health() -> HealthResponse:
     return HealthResponse(
-        status="ok", service="stock-ai-api", timestamp=datetime.now(UTC)
+        status="ok", service="stock-ai-api", timestamp=datetime.now(timezone.utc)
     )
 
 
