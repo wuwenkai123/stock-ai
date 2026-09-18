@@ -7,6 +7,9 @@ services:
       STOCK_AI_CORS_ORIGINS: http://localhost:8080,http://localhost:5173
       STOCK_AI_FINANCIAL_API_KEY: ${HITHINK_FINANCE_API_KEY:-}
       STOCK_AI_FINANCIAL_API_BASE_URL: ${HITHINK_FINANCE_API_BASE_URL:-https://fuyao.aicubes.cn}
+      STOCK_AI_MARKET_CACHE_DIR: /app/data/market-cache
+    volumes:
+      - ./data:/app/data
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
       interval: 10s

@@ -11,3 +11,5 @@ dist/
 .vscode/
 .idea/
 .DS_Store
+data/market-cache/*.json
+data/market-cache/*.tmp

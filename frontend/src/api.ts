@@ -56,7 +56,7 @@ export type AllMarketData = {
   generated_at: string;
   catalog: {
     total: number;
-    items: Array<Record<string, string | null>>;
+    items: Array<Record<string, unknown>>;
   };
   snapshot: {
     timestamp: number | null;
@@ -69,6 +69,12 @@ export type AllMarketData = {
     download_url: string | null;
     expires_at: string | null;
   }>;
+  cache: {
+    enabled: boolean;
+    directory: string;
+    catalog_hit: boolean;
+    snapshot_hit: boolean;
+  };
   notes: string[];
 };
 
@@ -96,6 +102,7 @@ export async function getStockOverview(query: string, range: number | "all" = 36
   return parseResponse(await fetch(`/api/v1/stocks/overview?${params}`));
 }
 
-export async function getAllMarketData(): Promise<AllMarketData> {
-  return parseResponse(await fetch("/api/v1/market/all"));
+export async function getAllMarketData(refresh = false): Promise<AllMarketData> {
+  const params = refresh ? "?refresh=true" : "";
+  return parseResponse(await fetch(`/api/v1/market/all${params}`));
 }

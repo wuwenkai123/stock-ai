@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     financial_api_key: str = ""
     financial_api_base_url: str = "https://fuyao.aicubes.cn"
     financial_api_timeout_seconds: float = 20.0
+    market_cache_dir: str = "data/market-cache"
     model_config = SettingsConfigDict(env_prefix="STOCK_AI_", case_sensitive=False)
 
 
@@ -38,7 +39,7 @@ class StockSummary(BaseModel):
 
 
 settings = Settings()
-app = FastAPI(title="stock-ai API", version="0.4.0")
+app = FastAPI(title="stock-ai API", version="0.5.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[item.strip() for item in settings.cors_origins.split(",")],
@@ -53,6 +54,7 @@ def financial_client() -> FinancialApiClient:
         base_url=settings.financial_api_base_url,
         api_key=settings.financial_api_key,
         timeout_seconds=settings.financial_api_timeout_seconds,
+        cache_dir=settings.market_cache_dir,
     )
 
 
@@ -64,10 +66,12 @@ def health() -> HealthResponse:
 
 
 @app.get("/api/v1/market/all", tags=["market"])
-async def all_market_data() -> dict:
-    """Get all current A-share snapshots and fresh bulk dataset URLs."""
+async def all_market_data(
+    refresh: bool = Query(False, description="跳过本地缓存并重新获取目录和最新行情"),
+) -> dict:
+    """Get all current A-share data and fresh bulk dataset URLs."""
     try:
-        return await financial_client().get_all_market_data()
+        return await financial_client().get_all_market_data(force_refresh=refresh)
     except MissingApiKeyError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except FinancialApiError as exc:

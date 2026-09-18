@@ -4,6 +4,8 @@ from typing import Any
 
 import httpx
 
+from ..market_cache import MarketCache
+
 
 class FinancialApiError(RuntimeError):
     """An upstream financial-api request failed."""
@@ -37,10 +39,11 @@ class FinancialApiClient:
         "adjustment_factors": "/api/dump/market-dumps/adjustment-factors/download-url",
     }
 
-    def __init__(self, base_url: str, api_key: str, timeout_seconds: float = 20.0) -> None:
+    def __init__(self, base_url: str, api_key: str, timeout_seconds: float = 20.0, cache_dir: str = "data/market-cache") -> None:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key.strip()
         self.timeout_seconds = timeout_seconds
+        self.cache = MarketCache(cache_dir)
 
     async def _get_json(
         self,
@@ -120,22 +123,35 @@ class FinancialApiClient:
             raise AmbiguousSymbolError(candidates)
         return candidates[0]
 
-    async def get_all_market_data(self) -> dict[str, Any]:
-        """Return the current A-share snapshot plus fresh bulk download URLs."""
+    async def get_all_market_data(self, force_refresh: bool = False) -> dict[str, Any]:
+        """Return current all-market data and fresh bulk download URLs."""
+        cached_catalog = None if force_refresh else self.cache.load_json("catalog.json", 900)
+        cached_snapshot = None if force_refresh else self.cache.load_json("snapshot.json", 300)
+
         dump_requests = asyncio.gather(
-            *(
-                self._get_json(path, {})
-                for path in self.MARKET_DUMPS.values()
-            )
+            *(self._get_json(path, {}) for path in self.MARKET_DUMPS.values())
         )
-        snapshot_request = self.get_all_snapshots()
-        catalog_request = self._get_json(
-            "/api/meta/tickers/list",
-            {"exchange": "SH,SZ,BJ", "asset_type": "a-share", "limit": 10000, "offset": 0},
+        snapshot_request = (
+            self.get_all_snapshots()
+            if cached_snapshot is None
+            else asyncio.sleep(0, result=cached_snapshot)
+        )
+        catalog_request = (
+            self._get_json(
+                "/api/meta/tickers/list",
+                {"exchange": "SH,SZ,BJ", "asset_type": "a-share", "limit": 10000, "offset": 0},
+            )
+            if cached_catalog is None
+            else asyncio.sleep(0, result=cached_catalog)
         )
         dump_values, snapshot, catalog_data = await asyncio.gather(
             dump_requests, snapshot_request, catalog_request
         )
+
+        if cached_snapshot is None:
+            self.cache.save_json("snapshot.json", snapshot)
+        if cached_catalog is None:
+            self.cache.save_json("catalog.json", catalog_data)
 
         datasets: dict[str, dict[str, Any]] = {}
         for name, value in zip(self.MARKET_DUMPS, dump_values):
@@ -154,7 +170,14 @@ class FinancialApiClient:
             },
             "snapshot": snapshot,
             "datasets": datasets,
+            "cache": {
+                "enabled": self.cache.enabled,
+                "directory": str(self.cache.directory),
+                "catalog_hit": cached_catalog is not None,
+                "snapshot_hit": cached_snapshot is not None,
+            },
             "notes": [
+                "Catalog and latest snapshots are cached locally for reuse.",
                 "Bulk download URLs are short-lived and should be used immediately.",
                 "daily_k_10y is the full-market ten-year unadjusted daily K-line dump.",
                 "adjustment_factors contains full-market dividend, bonus-share, and allotment events.",
@@ -171,10 +194,7 @@ class FinancialApiClient:
         pages = 0
 
         while True:
-            data = await self._get_json(
-                self.SNAPSHOT_PATH,
-                {"limit": limit, "offset": offset},
-            )
+            data = await self._get_json(self.SNAPSHOT_PATH, {"limit": limit, "offset": offset})
             page_items = self._items(data)
             items.extend(page_items)
             pages += 1
@@ -248,10 +268,10 @@ class FinancialApiClient:
         from_date = start.date().isoformat()
         to_date = now.date().isoformat()
 
-        if since_listing:
-            historical_request = self.get_historical_bars(thscode, start, now, adjust)
-        else:
-            historical_request = self._get_json(
+        historical_request = (
+            self.get_historical_bars(thscode, start, now, adjust)
+            if since_listing
+            else self._get_json(
                 self.HISTORICAL_PATH,
                 {
                     "thscode": thscode,
@@ -261,6 +281,7 @@ class FinancialApiClient:
                     "adjust": adjust,
                 },
             )
+        )
 
         snapshot_data, historical_data, actions_data = await asyncio.gather(
             self._get_json(self.SNAPSHOT_PATH, {"thscodes": thscode}),

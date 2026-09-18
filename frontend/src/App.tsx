@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { getAllMarketData, getHealth, getStockOverview, type AllMarketData, type StockOverview } from "./api";
 
 function formatDate(timestamp: number) {
@@ -14,6 +14,8 @@ export default function App() {
   const [historyRange, setHistoryRange] = useState<string>("365");
   const [overview, setOverview] = useState<StockOverview | null>(null);
   const [allMarket, setAllMarket] = useState<AllMarketData | null>(null);
+  const [marketSearch, setMarketSearch] = useState("");
+  const [marketPage, setMarketPage] = useState(1);
   const [health, setHealth] = useState("正在连接 API…");
   const [loading, setLoading] = useState(false);
   const [bulkLoading, setBulkLoading] = useState(false);
@@ -41,11 +43,12 @@ export default function App() {
     }
   }
 
-  async function loadAllMarket() {
+  async function loadAllMarket(refresh = false) {
     setBulkLoading(true);
     setBulkError(null);
     try {
-      setAllMarket(await getAllMarketData());
+      setAllMarket(await getAllMarketData(refresh));
+      setMarketPage(1);
     } catch (reason) {
       setBulkError(reason instanceof Error ? reason.message : "获取全市场数据失败");
       setAllMarket(null);
@@ -54,6 +57,18 @@ export default function App() {
     }
   }
 
+  const marketRows = useMemo(() => {
+    if (!allMarket) return [];
+    const names = new Map(allMarket.catalog.items.map((item) => [String(item.thscode ?? ""), String(item.name ?? "")]));
+    const keyword = marketSearch.trim().toLowerCase();
+    return allMarket.snapshot.items
+      .map((item) => ({ ...item, name: names.get(item.thscode) ?? "" }))
+      .filter((item) => !keyword || item.thscode.toLowerCase().includes(keyword) || item.ticker.toLowerCase().includes(keyword) || item.name.toLowerCase().includes(keyword));
+  }, [allMarket, marketSearch]);
+
+  const marketPageSize = 50;
+  const marketPageCount = Math.max(1, Math.ceil(marketRows.length / marketPageSize));
+  const visibleMarketRows = marketRows.slice((marketPage - 1) * marketPageSize, marketPage * marketPageSize);
   const snapshot = overview?.snapshot;
   const bars = overview?.bars.slice(-12).reverse() ?? [];
   const actions = overview?.corporate_actions.slice(0, 8) ?? [];
@@ -86,11 +101,11 @@ export default function App() {
       </section>
 
       <section className="panel">
-        <div className="panel-title"><h3>全市场 A 股数据</h3><button onClick={loadAllMarket} disabled={bulkLoading}>{bulkLoading ? "获取中…" : "一键获取所有股票信息"}</button></div>
-        <p className="disclaimer">获取全市场股票目录、最新行情，以及可直接下载的十年日 K、近十日日 K 和完整分红/送股数据集。</p>
+        <div className="panel-title"><h3>全市场 A 股数据</h3><div className="bulk-actions"><button onClick={() => loadAllMarket(false)} disabled={bulkLoading}>{bulkLoading ? "获取中…" : "一键获取所有股票信息"}</button>{allMarket && <button onClick={() => loadAllMarket(true)} disabled={bulkLoading}>刷新数据</button>}</div></div>
+        <p className="disclaimer">获取全市场股票目录、最新行情，以及可直接下载的十年日 K、近十日日 K 和完整分红/送股数据集。目录和最新行情会缓存在后端本地，下载链接仍会每次刷新。</p>
         {bulkError && <div className="error">{bulkError}</div>}
-        {allMarket && <div className="status"><span className="dot ok" />已获取 {allMarket.catalog.total.toLocaleString()} 个股票标的，{allMarket.snapshot.items.length.toLocaleString()} 条最新行情；数据集下载链接约 5 分钟内有效。</div>}
-        {allMarket && <ul><li>股票目录：{allMarket.catalog.total.toLocaleString()} 个</li><li>最新行情：{allMarket.snapshot.total.toLocaleString()} 个，分页 {allMarket.snapshot.pages} 页</li>{Object.entries(allMarket.datasets).map(([name, dataset]) => <li key={name}>{name}：{dataset.download_url ? <a href={dataset.download_url} target="_blank" rel="noreferrer">下载 Parquet</a> : "暂无下载链接"}</li>)}</ul>}
+        {allMarket && <div className="status"><span className="dot ok" />已获取 {allMarket.catalog.total.toLocaleString()} 个股票标的，{allMarket.snapshot.items.length.toLocaleString()} 条最新行情；缓存命中：目录 {allMarket.cache.catalog_hit ? "是" : "否"}，行情 {allMarket.cache.snapshot_hit ? "是" : "否"}。</div>}
+        {allMarket && <><div className="market-controls"><input className="market-filter" value={marketSearch} onChange={(event) => { setMarketSearch(event.target.value); setMarketPage(1); }} placeholder="搜索代码或股票名称" /><span>显示 {marketRows.length.toLocaleString()} / {allMarket.snapshot.items.length.toLocaleString()}</span></div><div className="table-wrap market-table"><table><thead><tr><th>代码</th><th>名称</th><th>最新价</th><th>涨跌幅</th><th>开盘</th><th>最高</th><th>最低</th><th>成交量</th><th>成交额</th></tr></thead><tbody>{visibleMarketRows.map((item) => <tr key={item.thscode}><td>{item.thscode}</td><td>{item.name || "—"}</td><td>{number(item.last_price)}</td><td className={item.price_change_ratio_pct >= 0 ? "positive" : "negative"}>{number(item.price_change_ratio_pct)}%</td><td>{number(item.open_price)}</td><td>{number(item.high_price)}</td><td>{number(item.low_price)}</td><td>{number(item.volume, 0)}</td><td>{number(item.turnover)}</td></tr>)}</tbody></table></div><div className="market-pagination"><button onClick={() => setMarketPage((page) => Math.max(1, page - 1))} disabled={marketPage <= 1}>上一页</button><span>第 {marketPage} / {marketPageCount} 页</span><button onClick={() => setMarketPage((page) => Math.min(marketPageCount, page + 1))} disabled={marketPage >= marketPageCount}>下一页</button></div><ul>{Object.entries(allMarket.datasets).map(([name, dataset]) => <li key={name}>{name}：{dataset.download_url ? <a href={dataset.download_url} target="_blank" rel="noreferrer">下载 Parquet</a> : "暂无下载链接"}</li>)}</ul></>}
       </section>
 
       {overview && (
