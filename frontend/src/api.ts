@@ -52,6 +52,26 @@ export type StockOverview = {
   };
 };
 
+export type AllMarketData = {
+  generated_at: string;
+  catalog: {
+    total: number;
+    items: Array<Record<string, string | null>>;
+  };
+  snapshot: {
+    timestamp: number | null;
+    total: number;
+    pages: number;
+    items: StockSnapshot[];
+  };
+  datasets: Record<string, {
+    format: string;
+    download_url: string | null;
+    expires_at: string | null;
+  }>;
+  notes: string[];
+};
+
 export type HealthResponse = {
   status: string;
   service: string;
@@ -74,4 +94,8 @@ export async function getStockOverview(query: string, range: number | "all" = 36
   if (range === "all") params.set("since_listing", "true");
   else params.set("days", String(range));
   return parseResponse(await fetch(`/api/v1/stocks/overview?${params}`));
+}
+
+export async function getAllMarketData(): Promise<AllMarketData> {
+  return parseResponse(await fetch("/api/v1/market/all"));
 }

@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
-import { getHealth, getStockOverview, type StockOverview } from "./api";
+import { getAllMarketData, getHealth, getStockOverview, type AllMarketData, type StockOverview } from "./api";
 
 function formatDate(timestamp: number) {
   return new Date(timestamp).toLocaleDateString("zh-CN", { timeZone: "Asia/Shanghai" });
@@ -13,9 +13,12 @@ export default function App() {
   const [query, setQuery] = useState("600519");
   const [historyRange, setHistoryRange] = useState<string>("365");
   const [overview, setOverview] = useState<StockOverview | null>(null);
+  const [allMarket, setAllMarket] = useState<AllMarketData | null>(null);
   const [health, setHealth] = useState("正在连接 API…");
   const [loading, setLoading] = useState(false);
+  const [bulkLoading, setBulkLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [bulkError, setBulkError] = useState<string | null>(null);
 
   useEffect(() => {
     getHealth()
@@ -35,6 +38,19 @@ export default function App() {
       setOverview(null);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadAllMarket() {
+    setBulkLoading(true);
+    setBulkError(null);
+    try {
+      setAllMarket(await getAllMarketData());
+    } catch (reason) {
+      setBulkError(reason instanceof Error ? reason.message : "获取全市场数据失败");
+      setAllMarket(null);
+    } finally {
+      setBulkLoading(false);
     }
   }
 
@@ -67,6 +83,14 @@ export default function App() {
         </form>
         <div className="status"><span className={`dot ${health.includes("在线") ? "ok" : ""}`} />{health}</div>
         {error && <div className="error">{error}</div>}
+      </section>
+
+      <section className="panel">
+        <div className="panel-title"><h3>全市场 A 股数据</h3><button onClick={loadAllMarket} disabled={bulkLoading}>{bulkLoading ? "获取中…" : "一键获取所有股票信息"}</button></div>
+        <p className="disclaimer">获取全市场股票目录、最新行情，以及可直接下载的十年日 K、近十日日 K 和完整分红/送股数据集。</p>
+        {bulkError && <div className="error">{bulkError}</div>}
+        {allMarket && <div className="status"><span className="dot ok" />已获取 {allMarket.catalog.total.toLocaleString()} 个股票标的，{allMarket.snapshot.items.length.toLocaleString()} 条最新行情；数据集下载链接约 5 分钟内有效。</div>}
+        {allMarket && <ul><li>股票目录：{allMarket.catalog.total.toLocaleString()} 个</li><li>最新行情：{allMarket.snapshot.total.toLocaleString()} 个，分页 {allMarket.snapshot.pages} 页</li>{Object.entries(allMarket.datasets).map(([name, dataset]) => <li key={name}>{name}：{dataset.download_url ? <a href={dataset.download_url} target="_blank" rel="noreferrer">下载 Parquet</a> : "暂无下载链接"}</li>)}</ul>}
       </section>
 
       {overview && (

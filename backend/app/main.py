@@ -38,7 +38,7 @@ class StockSummary(BaseModel):
 
 
 settings = Settings()
-app = FastAPI(title="stock-ai API", version="0.3.0")
+app = FastAPI(title="stock-ai API", version="0.4.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[item.strip() for item in settings.cors_origins.split(",")],
@@ -61,6 +61,17 @@ def health() -> HealthResponse:
     return HealthResponse(
         status="ok", service="stock-ai-api", timestamp=datetime.now(timezone.utc)
     )
+
+
+@app.get("/api/v1/market/all", tags=["market"])
+async def all_market_data() -> dict:
+    """Get all current A-share snapshots and fresh bulk dataset URLs."""
+    try:
+        return await financial_client().get_all_market_data()
+    except MissingApiKeyError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except FinancialApiError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @app.get("/api/v1/stocks/overview", tags=["stocks"])

@@ -24,12 +24,18 @@ class AmbiguousSymbolError(FinancialApiError):
 
 
 class FinancialApiClient:
-    """Small server-side adapter for the official financial-api service."""
+    """Server-side adapter for the official financial-api service."""
 
     ADJUSTMENT_FACTORS_PATH = "/api/a-share/corporate-actions/adjustment-factors"
     HISTORICAL_PATH = "/api/a-share/prices/historical"
+    SNAPSHOT_PATH = "/api/a-share/prices/snapshot"
     MAX_HISTORY_CHUNK_DAYS = 3650
     EARLIEST_A_SHARE_DATE = datetime(1990, 1, 1, tzinfo=timezone.utc)
+    MARKET_DUMPS = {
+        "daily_k_10y": "/api/dump/market-dumps/daily-k/download-url",
+        "daily_k_10d": "/api/dump/market-dumps/daily-k-10d/download-url",
+        "adjustment_factors": "/api/dump/market-dumps/adjustment-factors/download-url",
+    }
 
     def __init__(self, base_url: str, api_key: str, timeout_seconds: float = 20.0) -> None:
         self.base_url = base_url.rstrip("/")
@@ -114,6 +120,78 @@ class FinancialApiClient:
             raise AmbiguousSymbolError(candidates)
         return candidates[0]
 
+    async def get_all_market_data(self) -> dict[str, Any]:
+        """Return the current A-share snapshot plus fresh bulk download URLs."""
+        dump_requests = asyncio.gather(
+            *(
+                self._get_json(path, {})
+                for path in self.MARKET_DUMPS.values()
+            )
+        )
+        snapshot_request = self.get_all_snapshots()
+        catalog_request = self._get_json(
+            "/api/meta/tickers/list",
+            {"exchange": "SH,SZ,BJ", "asset_type": "a-share", "limit": 10000, "offset": 0},
+        )
+        dump_values, snapshot, catalog_data = await asyncio.gather(
+            dump_requests, snapshot_request, catalog_request
+        )
+
+        datasets: dict[str, dict[str, Any]] = {}
+        for name, value in zip(self.MARKET_DUMPS, dump_values):
+            value = value if isinstance(value, dict) else {}
+            datasets[name] = {
+                "format": "parquet",
+                "download_url": value.get("presigned_url"),
+                "expires_at": value.get("presigned_url_expires_at"),
+            }
+
+        return {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "catalog": {
+                "total": len(self._items(catalog_data)),
+                "items": self._items(catalog_data),
+            },
+            "snapshot": snapshot,
+            "datasets": datasets,
+            "notes": [
+                "Bulk download URLs are short-lived and should be used immediately.",
+                "daily_k_10y is the full-market ten-year unadjusted daily K-line dump.",
+                "adjustment_factors contains full-market dividend, bonus-share, and allotment events.",
+            ],
+        }
+
+    async def get_all_snapshots(self) -> dict[str, Any]:
+        """Page through the all-market snapshot endpoint."""
+        limit = 1000
+        offset = 0
+        items: list[dict[str, Any]] = []
+        timestamp: Any = None
+        total: Any = None
+        pages = 0
+
+        while True:
+            data = await self._get_json(
+                self.SNAPSHOT_PATH,
+                {"limit": limit, "offset": offset},
+            )
+            page_items = self._items(data)
+            items.extend(page_items)
+            pages += 1
+            if isinstance(data, dict):
+                timestamp = data.get("timestamp", timestamp)
+                total = data.get("total", total)
+            if len(page_items) < limit or (total is not None and len(items) >= int(total)):
+                break
+            offset += limit
+
+        return {
+            "timestamp": timestamp,
+            "total": int(total) if total is not None else len(items),
+            "pages": pages,
+            "items": items,
+        }
+
     async def get_historical_bars(
         self,
         thscode: str,
@@ -185,7 +263,7 @@ class FinancialApiClient:
             )
 
         snapshot_data, historical_data, actions_data = await asyncio.gather(
-            self._get_json("/api/a-share/prices/snapshot", {"thscodes": thscode}),
+            self._get_json(self.SNAPSHOT_PATH, {"thscodes": thscode}),
             historical_request,
             self._get_json(
                 self.ADJUSTMENT_FACTORS_PATH,
